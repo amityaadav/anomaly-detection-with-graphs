@@ -67,6 +67,12 @@ COMPOSE""",
             "cd /opt/demo && docker compose up -d",
         )
 
+        key_pair = ec2.KeyPair(
+            self,
+            "DataInstanceKeyPair",
+            key_pair_name="anomaly-demo-ec2-key",
+        )
+
         self.ec2_instance = ec2.Instance(
             self,
             "DataInstance",
@@ -80,6 +86,7 @@ COMPOSE""",
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             user_data=user_data,
             security_group=ec2_sg,
+            key_pair=key_pair,
         )
 
         # -----------------------------------------------------------
@@ -168,4 +175,12 @@ COMPOSE""",
         CfnOutput(self, "EC2PublicIp", value=self.ec2_instance.instance_public_ip)
         CfnOutput(
             self, "RDSEndpoint", value=self.rds_instance.db_instance_endpoint_address
+        )
+        CfnOutput(
+            self,
+            "EC2KeyPairId",
+            value=key_pair.key_pair_id,
+            description="Retrieve private key: aws ssm get-parameter "
+            "--name /ec2/keypair/<this-value> --with-decryption "
+            "--query Parameter.Value --output text",
         )
