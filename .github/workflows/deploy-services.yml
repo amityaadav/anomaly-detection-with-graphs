@@ -1,0 +1,88 @@
+name: Deploy services
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'agent/**'
+
+  workflow_dispatch:
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  deploy-services:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Package and deploy domain service Lambdas
+        run: |
+          for svc_dir in services/*/; do
+            svc_name=$(basename "$svc_dir")
+
+            # Skip shared — it's a library, not a Lambda
+            if [ "$svc_name" = "shared" ]; then
+              continue
+            fi
+
+            echo "Packaging $svc_name..."
+            mkdir -p /tmp/build/$svc_name
+
+            # Copy service code
+            cp -r "$svc_dir"* /tmp/build/$svc_name/
+
+            # Copy shared library
+            cp -r services/shared /tmp/build/$svc_name/shared
+
+            # Install dependencies if requirements.txt exists
+            if [ -f "$svc_dir/requirements.txt" ]; then
+              pip install -r "$svc_dir/requirements.txt" \
+                -t /tmp/build/$svc_name/ --quiet
+            fi
+
+            # Zip it
+            cd /tmp/build/$svc_name
+            zip -r /tmp/$svc_name.zip . -q
+            cd -
+
+            # Deploy
+            echo "Deploying $svc_name..."
+            aws lambda update-function-code \
+              --function-name anomaly-demo-$svc_name \
+              --zip-file fileb:///tmp/$svc_name.zip \
+              --no-cli-pager || echo "Lambda anomaly-demo-$svc_name not found yet (deploy infra first)"
+
+          done
+
+      - name: Package and deploy agent trigger Lambda
+        run: |
+          echo "Packaging agent trigger..."
+          mkdir -p /tmp/build/agent-trigger
+
+          cp agent/trigger_lambda/handler.py /tmp/build/agent-trigger/
+          cp -r agent/tools /tmp/build/agent-trigger/tools
+          cp agent/agent.py /tmp/build/agent-trigger/
+
+          if [ -f agent/requirements.txt ]; then
+            pip install -r agent/requirements.txt \
+              -t /tmp/build/agent-trigger/ --quiet
+          fi
+
+          cd /tmp/build/agent-trigger
+          zip -r /tmp/agent-trigger.zip . -q
+          cd -
+
+          echo "Deploying agent trigger..."
+          aws lambda update-function-code \
+            --function-name anomaly-demo-agent-trigger \
+            --zip-file fileb:///tmp/agent-trigger.zip \
+            --no-cli-pager || echo "Lambda anomaly-demo-agent-trigger not found yet (deploy infra first)"

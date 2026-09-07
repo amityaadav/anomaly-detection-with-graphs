@@ -1,0 +1,78 @@
+{
+  "scenarios": {
+    "redis2": {
+      "name": "Redis Cluster 2 memory pressure",
+      "description": "Cache eviction storm causes cascading cache misses across domain services",
+      "ssm_flags": {
+        "/anomaly-demo/flags/redis2-failure": "true"
+      },
+      "affected_services": ["order", "cart", "search", "recommend", "pricing", "payment", "inventory", "ratelimit", "mlmodel"],
+      "expected_root_cause": "redis2",
+      "expected_symptoms": [
+        {"service": "order", "type": "timeout", "message": "Redis write timeout after 5000ms"},
+        {"service": "cart", "type": "error", "message": "Session cache miss rate 94%"},
+        {"service": "search", "type": "degraded", "message": "Stale search results, cache age 47min"},
+        {"service": "recommend", "type": "error", "message": "Feature vector cache empty"},
+        {"service": "pricing", "type": "degraded", "message": "Cached prices not refreshing"}
+      ]
+    },
+    "pgpool": {
+      "name": "PostgreSQL connection pool exhaustion",
+      "description": "PG Primary hits max_connections, all write-path services fail",
+      "ssm_flags": {
+        "/anomaly-demo/flags/pgpri-failure": "true"
+      },
+      "affected_services": ["order", "payment", "inventory", "shipping", "user", "auth"],
+      "expected_root_cause": "pgpri",
+      "expected_symptoms": [
+        {"service": "order", "type": "error", "message": "FATAL: too many connections for role postgres"},
+        {"service": "payment", "type": "error", "message": "Transaction rollback: connection refused"},
+        {"service": "shipping", "type": "error", "message": "Label generation failed: DB unavailable"},
+        {"service": "user", "type": "error", "message": "Login failed: user lookup timeout"}
+      ]
+    },
+    "kafka": {
+      "name": "Kafka partition leader rebalancing",
+      "description": "Async event consumers lag while sync paths continue normally",
+      "ssm_flags": {
+        "/anomaly-demo/flags/kafka-failure": "true"
+      },
+      "affected_services": ["order", "payment", "inventory", "shipping", "audit", "notify"],
+      "expected_root_cause": "kafka",
+      "expected_symptoms": [
+        {"service": "notify", "type": "degraded", "message": "Notification delivery delayed 12min"},
+        {"service": "audit", "type": "degraded", "message": "Audit event consumer lag: 8400 messages"}
+      ]
+    },
+    "vault": {
+      "name": "Vault secret rotation failure",
+      "description": "Credential rotation succeeds in Vault but propagation fails to long-running pods",
+      "ssm_flags": {
+        "/anomaly-demo/flags/vault-failure": "true"
+      },
+      "affected_services": ["auth", "config", "order", "payment", "shipping", "user"],
+      "expected_root_cause": "vault",
+      "expected_symptoms": [
+        {"service": "payment", "type": "error", "message": "DB auth failed: password authentication failed"},
+        {"service": "shipping", "type": "error", "message": "DB auth failed: password authentication failed"},
+        {"service": "order", "type": "healthy", "message": "Restarted 2hrs ago, has fresh credentials"},
+        {"service": "user", "type": "healthy", "message": "Deployed yesterday, has fresh credentials"}
+      ]
+    },
+    "dns": {
+      "name": "DNS resolution intermittent failure",
+      "description": "External DNS resolution flaps, affecting only services calling external APIs",
+      "ssm_flags": {
+        "/anomaly-demo/flags/dns-failure": "true"
+      },
+      "affected_services": ["stripe", "carrier", "sendgrid", "sms", "taxapi", "cdn", "lb"],
+      "expected_root_cause": "dns",
+      "expected_symptoms": [
+        {"service": "payment", "type": "error", "message": "Stripe API: getaddrinfo ENOTFOUND api.stripe.com"},
+        {"service": "shipping", "type": "error", "message": "Carrier API: DNS resolution timeout"},
+        {"service": "notify", "type": "error", "message": "SendGrid: connection failed, DNS SERVFAIL"},
+        {"service": "pricing", "type": "error", "message": "Tax API: NXDOMAIN for tax.api.example.com"}
+      ]
+    }
+  }
+}

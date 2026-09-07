@@ -1,0 +1,40 @@
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: anomaly-neo4j
+    ports:
+      - "7474:7474"   # Browser UI
+      - "7687:7687"   # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-DemoGraph2026!}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_server_memory_heap_initial__size=256m
+      - NEO4J_server_memory_heap_max__size=256m
+    volumes:
+      - neo4j_data:/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: anomaly-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: anomaly-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=demo
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${PG_PASSWORD:-DemoPostgres2026!}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  pg_data:

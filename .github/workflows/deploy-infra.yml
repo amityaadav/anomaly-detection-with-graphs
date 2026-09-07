@@ -1,0 +1,51 @@
+name: Deploy infrastructure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+      - 'docker-compose.yml'
+      - 'scripts/**'
+
+  workflow_dispatch:
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk
+
+      - name: Install Python dependencies
+        run: |
+          cd infra
+          pip install -r requirements.txt
+
+      - name: CDK bootstrap (first time only)
+        run: |
+          cd infra
+          cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_DEFAULT_REGION
+
+      - name: CDK deploy all stacks
+        run: |
+          cd infra
+          cdk deploy --all --require-approval never \
+            --context neo4j_password=${{ secrets.NEO4J_PASSWORD }} \
+            --context ollama_api_key=${{ secrets.OLLAMA_API_KEY }}

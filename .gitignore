@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Node / CDK
+node_modules/
+cdk.out/
+package-lock.json
+
+# Environment
+.env
+*.pem
+*.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# AWS
+.aws-sam/
+*.zip
+
+# Docker
+docker-compose.override.yml
+
+# Terraform (if used later)
+.terraform/
+*.tfstate*
