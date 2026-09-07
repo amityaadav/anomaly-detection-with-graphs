@@ -13,7 +13,7 @@ docker compose up -d
 echo "4. Waiting for Neo4j to be ready..."
 sleep 15
 echo "5. Seeding the graph..."
-python graph/seed.py --local
+python3 graph/seed.py --local
 echo "=== Bootstrap complete ==="
 echo "Neo4j Browser: http://localhost:7474"
 echo "Redis: localhost:6379"

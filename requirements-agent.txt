@@ -1,0 +1,4 @@
+# Agent dependencies (Week 3) — requires Python 3.10+
+-r requirements.txt
+strands-agents>=0.1.0
+strands-agents-tools>=0.1.0

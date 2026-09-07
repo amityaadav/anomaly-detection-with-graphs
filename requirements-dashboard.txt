@@ -1,0 +1,3 @@
+# Dashboard dependencies (Week 4)
+-r requirements.txt
+streamlit>=1.35.0

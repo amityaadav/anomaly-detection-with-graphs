@@ -72,10 +72,8 @@ jobs:
           cp -r agent/tools /tmp/build/agent-trigger/tools
           cp agent/agent.py /tmp/build/agent-trigger/
 
-          if [ -f agent/requirements.txt ]; then
-            pip install -r agent/requirements.txt \
-              -t /tmp/build/agent-trigger/ --quiet
-          fi
+          pip install -r requirements-agent.txt \
+            -t /tmp/build/agent-trigger/ --quiet
 
           cd /tmp/build/agent-trigger
           zip -r /tmp/agent-trigger.zip . -q
