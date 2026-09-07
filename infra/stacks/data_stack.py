@@ -3,6 +3,7 @@
 from aws_cdk import (
     Stack,
     CfnOutput,
+    SecretValue,
     aws_ec2 as ec2,
     aws_rds as rds,
     aws_ssm as ssm,
@@ -13,10 +14,11 @@ from constructs import Construct
 
 
 class DataStack(Stack):
-    def __init__(self, scope: Construct, id: str, vpc: ec2.Vpc, **kwargs) -> None:
+    def __init__(self, scope: Construct, id: str, vpc: ec2.Vpc, ec2_sg: ec2.SecurityGroup, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
         neo4j_password = self.node.try_get_context("neo4j_password") or "DemoGraph2026!"
+        pg_password = self.node.try_get_context("pg_password") or "DemoPostgres2026!"
 
         # -----------------------------------------------------------
         # EC2 instance: Neo4j + Redis via Docker Compose
@@ -77,12 +79,7 @@ COMPOSE""",
             ),
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             user_data=user_data,
-            security_group=ec2.SecurityGroup.from_security_group_id(
-                self, "Ec2SgRef",
-                # Importing from NetworkStack — passed via vpc's default SG
-                # In production use explicit cross-stack references
-                vpc.vpc_default_security_group,
-            ),
+            security_group=ec2_sg,
         )
 
         # -----------------------------------------------------------
@@ -102,7 +99,10 @@ COMPOSE""",
             allocated_storage=20,
             max_allocated_storage=20,
             database_name="demo",
-            credentials=rds.Credentials.from_generated_secret("postgres"),
+            credentials=rds.Credentials.from_password(
+                username="postgres",
+                password=SecretValue.unsafe_plain_text(pg_password),
+            ),
             publicly_accessible=True,  # For local dev access — lock down for production
             removal_policy=RemovalPolicy.DESTROY,
             deletion_protection=False,
@@ -138,6 +138,13 @@ COMPOSE""",
             "PgEndpoint",
             parameter_name="/anomaly-demo/pg-endpoint",
             string_value=self.rds_instance.db_instance_endpoint_address,
+        )
+
+        ssm.StringParameter(
+            self,
+            "PgPassword",
+            parameter_name="/anomaly-demo/pg-password",
+            string_value=pg_password,
         )
 
         # Failure injection flags (default: disabled)

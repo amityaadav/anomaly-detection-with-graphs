@@ -21,6 +21,7 @@ data = DataStack(
     app,
     "AnomalyDemo-Data",
     vpc=network.vpc,
+    ec2_sg=network.ec2_sg,
     env=env,
 )
 
