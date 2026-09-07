@@ -402,7 +402,7 @@ CREATE (stripe)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns)
 CREATE (carrier)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns)
 CREATE (sendgrid)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns)
 CREATE (sms)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns)
-CREATE (taxapi)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns)
+CREATE (taxapi)-[:DEPENDS_ON {type: 'sync', criticality: 'critical'}]->(dns);
 
 // ============================================================
 // Indexes for fast lookup
