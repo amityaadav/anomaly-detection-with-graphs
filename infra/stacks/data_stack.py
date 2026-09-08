@@ -17,7 +17,7 @@ class DataStack(Stack):
     def __init__(self, scope: Construct, id: str, vpc: ec2.Vpc, ec2_sg: ec2.SecurityGroup, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        neo4j_password = self.node.try_get_context("neo4j_password") or "DemoGraph2026!"
+        neo4j_password = self.node.try_get_context("neo4j_password") or "DemoGraph2026x"
         pg_password = self.node.try_get_context("pg_password") or "DemoPostgres2026!"
 
         # -----------------------------------------------------------
