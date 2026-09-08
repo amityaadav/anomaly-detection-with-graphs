@@ -1,7 +1,4 @@
-"""Lambda functions for domain services and the agent trigger.
-
-Stub — will be fully implemented in week 2 when service handlers are built.
-"""
+"""Lambda functions for domain services and the agent trigger."""
 
 from aws_cdk import (
     Stack,
@@ -84,6 +81,45 @@ class ServicesStack(Stack):
             self.service_lambdas[svc] = fn
 
         # Agent trigger Lambda (invoked by SNS when CloudWatch alarm fires)
+        ollama_api_key = self.node.try_get_context("ollama_api_key") or ""
+        ssm.StringParameter(
+            self,
+            "OllamaApiKey",
+            parameter_name="/anomaly-demo/ollama-api-key",
+            string_value=ollama_api_key,
+            description="Ollama Cloud API key for the triage agent",
+        )
+
+        agent_role = iam.Role(
+            self,
+            "AgentLambdaRole",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaVPCAccessExecutionRole"
+                ),
+            ],
+        )
+        agent_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameter", "ssm:GetParametersByPath"],
+                resources=[f"arn:aws:ssm:*:{self.account}:parameter/anomaly-demo/*"],
+            )
+        )
+        agent_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "logs:StartQuery",
+                    "logs:GetQueryResults",
+                    "logs:DescribeLogGroups",
+                ],
+                resources=["*"],
+            )
+        )
+
         self.agent_lambda = _lambda.Function(
             self,
             "Fn-agent-trigger",
@@ -91,11 +127,13 @@ class ServicesStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="handler.lambda_handler",
             code=_lambda.Code.from_asset("../agent/trigger_lambda"),
-            role=lambda_role,
+            role=agent_role,
             timeout=Duration.seconds(120),
             memory_size=256,
             environment={
                 "SSM_PREFIX": "/anomaly-demo",
+                "OLLAMA_MODEL": "qwen3:32b",
+                "OLLAMA_HOST": "https://api.ollama.com",
             },
         )
 
