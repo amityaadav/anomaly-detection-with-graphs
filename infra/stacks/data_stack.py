@@ -5,6 +5,7 @@ from aws_cdk import (
     CfnOutput,
     SecretValue,
     aws_ec2 as ec2,
+    aws_iam as iam,
     aws_rds as rds,
     aws_ssm as ssm,
     RemovalPolicy,
@@ -87,6 +88,15 @@ COMPOSE""",
             user_data=user_data,
             security_group=ec2_sg,
             key_pair=key_pair,
+        )
+
+        self.ec2_instance.role.add_to_principal_policy(
+            iam.PolicyStatement(
+                actions=["ssm:GetParameter"],
+                resources=[
+                    f"arn:aws:ssm:{self.region}:{self.account}:parameter/anomaly-demo/*"
+                ],
+            )
         )
 
         # -----------------------------------------------------------
