@@ -42,7 +42,9 @@ def get_neo4j_driver():
     from neo4j import GraphDatabase
     ssm = get_ssm_client()
     prefix = os.environ.get("SSM_PREFIX", "/anomaly-demo")
-    uri = ssm.get_parameter(Name=f"{prefix}/neo4j-uri", WithDecryption=True)["Parameter"]["Value"]
+    uri = os.environ.get("NEO4J_URI") or ssm.get_parameter(
+        Name=f"{prefix}/neo4j-uri", WithDecryption=True
+    )["Parameter"]["Value"]
     password = ssm.get_parameter(Name=f"{prefix}/neo4j-password", WithDecryption=True)["Parameter"]["Value"]
     return GraphDatabase.driver(uri, auth=("neo4j", password))
 
