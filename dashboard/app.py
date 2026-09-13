@@ -133,7 +133,7 @@ if page == "Dependency Graph":
             st.subheader("Edge Types")
             crit_counts = {}
             for e in edges:
-                c = e.get("criticality", "unknown")
+                c = e.get("criticality") or "unknown"
                 crit_counts[c] = crit_counts.get(c, 0) + 1
             for crit, count in sorted(crit_counts.items()):
                 if crit:
