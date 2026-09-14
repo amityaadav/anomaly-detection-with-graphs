@@ -81,7 +81,7 @@ class ServicesStack(Stack):
             self.service_lambdas[svc] = fn
 
         # Agent trigger Lambda (invoked by SNS when CloudWatch alarm fires)
-        ollama_api_key = self.node.try_get_context("ollama_api_key") or ""
+        ollama_api_key = self.node.try_get_context("ollama_api_key") or "none"
         ssm.StringParameter(
             self,
             "OllamaApiKey",
