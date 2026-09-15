@@ -92,9 +92,18 @@ COMPOSE""",
 
         self.ec2_instance.role.add_to_principal_policy(
             iam.PolicyStatement(
-                actions=["ssm:GetParameter"],
+                actions=["ssm:GetParameter", "ssm:PutParameter"],
                 resources=[
                     f"arn:aws:ssm:{self.region}:{self.account}:parameter/anomaly-demo/*"
+                ],
+            )
+        )
+
+        self.ec2_instance.role.add_to_principal_policy(
+            iam.PolicyStatement(
+                actions=["lambda:InvokeFunction"],
+                resources=[
+                    f"arn:aws:lambda:{self.region}:{self.account}:function:anomaly-demo-*"
                 ],
             )
         )
