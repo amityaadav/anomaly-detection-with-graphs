@@ -13,12 +13,17 @@ SSM_PREFIX = os.environ.get("SSM_PREFIX", "/anomaly-demo")
 
 
 def get_param(name: str, use_cache: bool = True) -> str:
-    """Get an SSM parameter value.
+    """Get a config parameter from env vars first, then SSM.
 
     Args:
         name: Parameter name without the prefix (e.g. 'redis-host').
         use_cache: Whether to use the in-memory cache.
     """
+    env_key = name.upper().replace("-", "_").replace("/", "_")
+    env_val = os.environ.get(env_key)
+    if env_val:
+        return env_val
+
     full_name = f"{SSM_PREFIX}/{name}"
 
     if use_cache and full_name in _cache:

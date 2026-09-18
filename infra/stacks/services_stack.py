@@ -4,6 +4,7 @@ from aws_cdk import (
     Stack,
     Duration,
     aws_lambda as _lambda,
+    aws_ec2 as ec2,
     aws_iam as iam,
     aws_ssm as ssm,
     aws_sns as sns,
@@ -55,6 +56,24 @@ class ServicesStack(Stack):
             )
         )
 
+        # Security group for Lambda functions inside the VPC
+        lambda_sg = ec2.SecurityGroup(
+            self,
+            "LambdaSg",
+            vpc=vpc,
+            description="Lambda functions — outbound to VPC resources",
+            allow_all_outbound=True,
+        )
+
+        # Resolve passwords from SSM parameters that DataStack creates
+        # (CloudFormation dynamic references — no secrets in source code)
+        pg_password_ref = ssm.StringParameter.value_for_string_parameter(
+            self, "/anomaly-demo/pg-password"
+        )
+        neo4j_password_ref = ssm.StringParameter.value_for_string_parameter(
+            self, "/anomaly-demo/neo4j-password"
+        )
+
         # Domain service Lambda stubs
         service_names = [
             "order", "payment", "cart", "inventory", "shipping",
@@ -71,11 +90,21 @@ class ServicesStack(Stack):
                 handler="handler.lambda_handler",
                 code=_lambda.Code.from_asset(f"../.build/{svc}"),
                 role=lambda_role,
+                vpc=vpc,
+                vpc_subnets=ec2.SubnetSelection(
+                    subnet_type=ec2.SubnetType.PUBLIC,
+                ),
+                security_groups=[lambda_sg],
                 timeout=Duration.seconds(30),
                 memory_size=128,
                 environment={
                     "SERVICE_NAME": svc,
                     "SSM_PREFIX": "/anomaly-demo",
+                    "REDIS_HOST": data_stack.ec2_instance.instance_private_ip,
+                    "PG_ENDPOINT": data_stack.rds_instance.db_instance_endpoint_address,
+                    "PG_PASSWORD": pg_password_ref,
+                    "NEO4J_URI": f"bolt://{data_stack.ec2_instance.instance_private_ip}:7687",
+                    "NEO4J_PASSWORD": neo4j_password_ref,
                 },
             )
             self.service_lambdas[svc] = fn
