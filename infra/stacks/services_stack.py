@@ -61,7 +61,7 @@ class ServicesStack(Stack):
             self,
             "LambdaSg",
             vpc=vpc,
-            description="Lambda functions — outbound to VPC resources",
+            description="Lambda functions - outbound to VPC resources",
             allow_all_outbound=True,
         )
 
