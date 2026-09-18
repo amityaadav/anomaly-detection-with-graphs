@@ -95,6 +95,7 @@ class ServicesStack(Stack):
                     subnet_type=ec2.SubnetType.PUBLIC,
                 ),
                 security_groups=[lambda_sg],
+                allow_public_subnet=True,
                 timeout=Duration.seconds(30),
                 memory_size=128,
                 environment={
