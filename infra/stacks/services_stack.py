@@ -69,7 +69,7 @@ class ServicesStack(Stack):
                 function_name=f"anomaly-demo-{svc}",
                 runtime=_lambda.Runtime.PYTHON_3_12,
                 handler="handler.lambda_handler",
-                code=_lambda.Code.from_asset(f"../services/{svc}"),
+                code=_lambda.Code.from_asset(f"../.build/{svc}"),
                 role=lambda_role,
                 timeout=Duration.seconds(30),
                 memory_size=128,

@@ -29,6 +29,9 @@ package-lock.json
 .aws-sam/
 *.zip
 
+# Lambda build artifacts
+.build/
+
 # Docker
 docker-compose.override.yml
 
