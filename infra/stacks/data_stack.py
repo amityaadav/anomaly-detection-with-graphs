@@ -108,6 +108,14 @@ COMPOSE""",
             )
         )
 
+        # Elastic IP - stable public address across stop/start cycles (free while attached)
+        eip = ec2.CfnEIP(self, "DataInstanceEIP", domain="vpc")
+        ec2.CfnEIPAssociation(
+            self, "DataInstanceEIPAssoc",
+            allocation_id=eip.attr_allocation_id,
+            instance_id=self.ec2_instance.instance_id,
+        )
+
         # -----------------------------------------------------------
         # RDS PostgreSQL — db.t3.micro free tier (750 hrs/month)
         # -----------------------------------------------------------
@@ -136,13 +144,87 @@ COMPOSE""",
         )
 
         # -----------------------------------------------------------
+        # Auto-setup: tools, repo, graph seeding, DB schema, Streamlit
+        # Runs once on instance creation; on stop/start Docker and
+        # systemd handle restarts automatically.
+        # -----------------------------------------------------------
+        user_data.add_commands(
+            "yum install -y git python3-pip",
+            "git clone https://github.com/amityaadav/anomaly-detection-with-graphs.git"
+            " /home/ec2-user/anomaly-detection-with-graphs || true",
+            "chown -R ec2-user:ec2-user /home/ec2-user/anomaly-detection-with-graphs",
+            "pip3 install streamlit neo4j boto3 psycopg2-binary",
+        )
+
+        # Wait for Neo4j container, then seed the graph
+        user_data.add_commands(
+            'for i in $(seq 1 30); do'
+            ' curl -sf http://localhost:7474 > /dev/null 2>&1 && break;'
+            ' echo "Waiting for Neo4j ($i/30)..."; sleep 10; done',
+            "cd /home/ec2-user/anomaly-detection-with-graphs &&"
+            " python3 graph/seed_http.py --host localhost --from-ssm"
+            " || echo 'Neo4j seeding deferred - seed manually after deploy'",
+        )
+
+        # Create PostgreSQL orders table (retries while RDS provisions)
+        user_data.add_commands(
+            f"export PG_HOST={self.rds_instance.db_instance_endpoint_address}",
+            "python3 << 'PYEOF'",
+            "import psycopg2, boto3, os, time",
+            "ssm = boto3.client('ssm', region_name='us-east-1')",
+            "for attempt in range(12):",
+            "    try:",
+            "        pw = ssm.get_parameter(Name='/anomaly-demo/pg-password')['Parameter']['Value']",
+            "        conn = psycopg2.connect(host=os.environ['PG_HOST'], port=5432,",
+            "            dbname='demo', user='postgres', password=pw, connect_timeout=10)",
+            "        cur = conn.cursor()",
+            "        cur.execute('CREATE TABLE IF NOT EXISTS orders "
+            "(id TEXT PRIMARY KEY, payload JSONB, created_at TIMESTAMPTZ DEFAULT NOW())')",
+            "        conn.commit(); conn.close()",
+            "        print('Orders table ready'); exit(0)",
+            "    except Exception as e:",
+            "        print(f'DB setup attempt {attempt+1}/12: {e}')",
+            "        time.sleep(10)",
+            "print('DB setup deferred'); exit(0)",
+            "PYEOF",
+        )
+
+        # Streamlit dashboard as a systemd service (auto-starts on boot)
+        user_data.add_commands(
+            "cat > /etc/systemd/system/streamlit.service << 'SVCEOF'",
+            "[Unit]",
+            "Description=Streamlit Dashboard",
+            "After=network.target docker.service",
+            "Wants=docker.service",
+            "",
+            "[Service]",
+            "Type=simple",
+            "User=ec2-user",
+            "WorkingDirectory=/home/ec2-user/anomaly-detection-with-graphs/dashboard",
+            "Environment=NEO4J_URI=bolt://localhost:7687",
+            "Environment=SSM_PREFIX=/anomaly-demo",
+            "Environment=AWS_DEFAULT_REGION=us-east-1",
+            "ExecStart=/usr/local/bin/streamlit run app.py"
+            " --server.port 8501 --server.address 0.0.0.0 --server.headless true",
+            "Restart=always",
+            "RestartSec=5",
+            "",
+            "[Install]",
+            "WantedBy=multi-user.target",
+            "SVCEOF",
+            "systemctl daemon-reload",
+            "systemctl enable streamlit",
+            "systemctl start streamlit",
+        )
+
+        # -----------------------------------------------------------
         # SSM Parameters — endpoints for Lambdas to discover
         # -----------------------------------------------------------
         ssm.StringParameter(
             self,
             "Neo4jUri",
             parameter_name="/anomaly-demo/neo4j-uri",
-            string_value=f"bolt://{self.ec2_instance.instance_public_ip}:7687",
+            string_value=f"bolt://{eip.ref}:7687",
         )
 
         ssm.StringParameter(
@@ -156,7 +238,7 @@ COMPOSE""",
             self,
             "RedisHost",
             parameter_name="/anomaly-demo/redis-host",
-            string_value=self.ec2_instance.instance_public_ip,
+            string_value=eip.ref,
         )
 
         ssm.StringParameter(
@@ -191,7 +273,7 @@ COMPOSE""",
         # -----------------------------------------------------------
         # Outputs
         # -----------------------------------------------------------
-        CfnOutput(self, "EC2PublicIp", value=self.ec2_instance.instance_public_ip)
+        CfnOutput(self, "EC2PublicIp", value=eip.ref)
         CfnOutput(
             self, "RDSEndpoint", value=self.rds_instance.db_instance_endpoint_address
         )
