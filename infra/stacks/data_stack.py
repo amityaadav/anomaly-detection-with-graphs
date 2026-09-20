@@ -22,19 +22,39 @@ class DataStack(Stack):
     ) -> None:
         super().__init__(scope, id, **kwargs)
 
-        neo4j_password = self.node.try_get_context("neo4j_password")
-        if not neo4j_password:
-            raise ValueError(
-                "CDK context 'neo4j_password' is required. "
-                "Deploy with: cdk deploy -c neo4j_password=YOUR_PASSWORD"
-            )
-
+        # -----------------------------------------------------------
+        # Secrets Manager — auto-generated credentials for all datastores
+        # -----------------------------------------------------------
         self.pg_secret = secretsmanager.Secret(
             self,
             "PgCredentials",
             secret_name="anomaly-demo/rds-credentials",
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 secret_string_template='{"username":"postgres"}',
+                generate_string_key="password",
+                exclude_punctuation=True,
+                password_length=32,
+            ),
+        )
+
+        self.neo4j_secret = secretsmanager.Secret(
+            self,
+            "Neo4jCredentials",
+            secret_name="anomaly-demo/neo4j-credentials",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template='{"username":"neo4j"}',
+                generate_string_key="password",
+                exclude_punctuation=True,
+                password_length=32,
+            ),
+        )
+
+        self.redis_secret = secretsmanager.Secret(
+            self,
+            "RedisCredentials",
+            secret_name="anomaly-demo/redis-credentials",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template='{}',
                 generate_string_key="password",
                 exclude_punctuation=True,
                 password_length=32,
@@ -57,9 +77,34 @@ class DataStack(Stack):
             'curl -SL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 '
             '-o /usr/local/lib/docker/cli-plugins/docker-compose',
             'chmod +x /usr/local/lib/docker/cli-plugins/docker-compose',
-            # Create compose file
+        )
+
+        # Retrieve secrets from Secrets Manager and write .env for Docker Compose
+        user_data.add_commands(
             "mkdir -p /opt/demo",
-            f"""cat > /opt/demo/docker-compose.yml << 'COMPOSE'
+            """python3 << 'PYEOF'
+import subprocess, json, os
+
+def get_pw(secret_id):
+    out = subprocess.check_output([
+        "aws", "secretsmanager", "get-secret-value",
+        "--secret-id", secret_id,
+        "--query", "SecretString", "--output", "text"
+    ], text=True)
+    return json.loads(out)["password"]
+
+neo4j_pw = get_pw("anomaly-demo/neo4j-credentials")
+redis_pw = get_pw("anomaly-demo/redis-credentials")
+
+with open("/opt/demo/.env", "w") as f:
+    f.write(f"NEO4J_PASSWORD={neo4j_pw}\\nREDIS_PASSWORD={redis_pw}\\n")
+os.chmod("/opt/demo/.env", 0o600)
+PYEOF""",
+        )
+
+        # Create compose file — passwords injected via .env, never in the template
+        user_data.add_commands(
+            """cat > /opt/demo/docker-compose.yml << 'COMPOSE'
 services:
   neo4j:
     image: neo4j:5-community
@@ -67,7 +112,7 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/{neo4j_password}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
       - NEO4J_server_memory_heap_initial__size=200m
       - NEO4J_server_memory_heap_max__size=200m
       - NEO4J_server_memory_pagecache_size=50m
@@ -79,7 +124,7 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 48mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 48mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
     restart: unless-stopped
 
 volumes:
@@ -130,6 +175,8 @@ COMPOSE""",
         )
 
         self.pg_secret.grant_read(self.ec2_instance.role)
+        self.neo4j_secret.grant_read(self.ec2_instance.role)
+        self.redis_secret.grant_read(self.ec2_instance.role)
 
         # Elastic IP - stable public address across stop/start cycles (free while attached)
         eip = ec2.CfnEIP(self, "DataInstanceEIP", domain="vpc")
@@ -167,8 +214,6 @@ COMPOSE""",
 
         # -----------------------------------------------------------
         # Auto-setup: tools, repo, graph seeding, DB schema, Streamlit
-        # Runs once on instance creation; on stop/start Docker and
-        # systemd handle restarts automatically.
         # -----------------------------------------------------------
         user_data.add_commands(
             "yum install -y git python3-pip",
@@ -213,9 +258,22 @@ COMPOSE""",
             "PYEOF",
         )
 
+        # Retrieve dashboard password for Streamlit auth gate
+        user_data.add_commands(
+            """DASH_PW=$(python3 -c "
+import subprocess, json
+out = subprocess.check_output([
+    'aws', 'secretsmanager', 'get-secret-value',
+    '--secret-id', 'anomaly-demo/neo4j-credentials',
+    '--query', 'SecretString', '--output', 'text'
+], text=True)
+print(json.loads(out)['password'], end='')
+")""",
+        )
+
         # Streamlit dashboard as a systemd service (auto-starts on boot)
         user_data.add_commands(
-            "cat > /etc/systemd/system/streamlit.service << 'SVCEOF'",
+            'cat > /etc/systemd/system/streamlit.service << SVCEOF',
             "[Unit]",
             "Description=Streamlit Dashboard",
             "After=network.target docker.service",
@@ -228,6 +286,7 @@ COMPOSE""",
             "Environment=NEO4J_URI=bolt://localhost:7687",
             "Environment=SSM_PREFIX=/anomaly-demo",
             "Environment=AWS_DEFAULT_REGION=us-east-1",
+            'Environment=DASHBOARD_PASSWORD=$DASH_PW',
             "ExecStart=/usr/local/bin/streamlit run app.py"
             " --server.port 8501 --server.address 0.0.0.0 --server.headless true",
             "Restart=always",
@@ -242,20 +301,13 @@ COMPOSE""",
         )
 
         # -----------------------------------------------------------
-        # SSM Parameters — endpoints for Lambdas to discover
+        # SSM Parameters — non-secret endpoints for Lambdas to discover
         # -----------------------------------------------------------
         ssm.StringParameter(
             self,
             "Neo4jUri",
             parameter_name="/anomaly-demo/neo4j-uri",
             string_value=f"bolt://{eip.ref}:7687",
-        )
-
-        ssm.StringParameter(
-            self,
-            "Neo4jPassword",
-            parameter_name="/anomaly-demo/neo4j-password",
-            string_value=neo4j_password,
         )
 
         ssm.StringParameter(

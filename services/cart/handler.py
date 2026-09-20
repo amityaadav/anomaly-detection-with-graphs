@@ -41,7 +41,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"Cart operation failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _get_cart(user_id: str) -> dict:
@@ -57,7 +57,7 @@ def _get_cart(user_id: str) -> dict:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         raw = r.get(f"cart:{user_id}")
         latency = (time.time() - t) * 1000
         log_event("success", f"Redis read cart:{user_id}", latency_ms=latency, dependency="redis2")
@@ -81,7 +81,7 @@ def _update_cart(user_id: str, event: dict, price: float) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         raw = r.get(f"cart:{user_id}")
         cart = json.loads(raw) if raw else {"items": []}
         cart["items"].append({
@@ -111,7 +111,7 @@ def _remove_from_cart(user_id: str, event: dict) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         raw = r.get(f"cart:{user_id}")
         cart = json.loads(raw) if raw else {"items": []}
         product_id = event.get("product_id")

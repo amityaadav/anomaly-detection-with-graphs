@@ -12,6 +12,7 @@ The graph schema (seeded by graph/seed.cypher):
   - ROUTES_TO edges connect the API Gateway to domain services.
 """
 
+import json
 import os
 
 import boto3
@@ -19,7 +20,9 @@ from neo4j import GraphDatabase
 from strands import tool
 
 _ssm = boto3.client("ssm")
+_sm = boto3.client("secretsmanager")
 _ssm_cache: dict[str, str] = {}
+_secret_cache: dict[str, dict] = {}
 SSM_PREFIX = os.environ.get("SSM_PREFIX", "/anomaly-demo")
 
 
@@ -31,9 +34,16 @@ def _get_ssm_param(name: str) -> str:
     return _ssm_cache[full]
 
 
+def _get_secret(secret_id: str, key: str) -> str:
+    if secret_id not in _secret_cache:
+        resp = _sm.get_secret_value(SecretId=secret_id)
+        _secret_cache[secret_id] = json.loads(resp["SecretString"])
+    return _secret_cache[secret_id][key]
+
+
 def _get_driver():
     uri = _get_ssm_param("neo4j-uri")
-    password = _get_ssm_param("neo4j-password")
+    password = _get_secret("anomaly-demo/neo4j-credentials", "password")
     return GraphDatabase.driver(uri, auth=("neo4j", password))
 
 

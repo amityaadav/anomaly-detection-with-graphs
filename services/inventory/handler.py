@@ -42,7 +42,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"Inventory operation failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _check_stock(product_id: str) -> int:
@@ -52,7 +52,7 @@ def _check_stock(product_id: str) -> int:
     if not is_failure_active("redis2-failure"):
         try:
             host = get_param("redis-host")
-            r = redis.Redis(host=host, port=6379, socket_timeout=5)
+            r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
             cached = r.get(f"stock:{product_id}")
             if cached:
                 latency = (time.time() - t) * 1000
@@ -81,10 +81,12 @@ def _read_postgres(product_id: str) -> int:
             host=host, port=5432, dbname="demo", user="postgres",
             password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute("SELECT stock FROM inventory WHERE product_id = %s", (product_id,))
-        row = cur.fetchone()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT stock FROM inventory WHERE product_id = %s", (product_id,))
+            row = cur.fetchone()
+        finally:
+            conn.close()
         stock = row[0] if row else 100
         latency = (time.time() - t) * 1000
         log_event("success", f"PG read stock for {product_id}: {stock}", latency_ms=latency, dependency="pgpri")
@@ -112,14 +114,16 @@ def _reserve_stock(product_id: str, quantity: int) -> int:
             host=host, port=5432, dbname="demo", user="postgres",
             password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE inventory SET stock = stock - %s WHERE product_id = %s AND stock >= %s RETURNING stock",
-            (quantity, product_id, quantity),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE inventory SET stock = stock - %s WHERE product_id = %s AND stock >= %s RETURNING stock",
+                (quantity, product_id, quantity),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
         if not row:
             raise ValueError(f"Insufficient stock for {product_id}")
         latency = (time.time() - t) * 1000
@@ -148,14 +152,16 @@ def _update_stock(product_id: str, quantity: int) -> int:
             host=host, port=5432, dbname="demo", user="postgres",
             password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO inventory (product_id, stock) VALUES (%s, %s) ON CONFLICT (product_id) DO UPDATE SET stock = %s RETURNING stock",
-            (product_id, quantity, quantity),
-        )
-        row = cur.fetchone()
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO inventory (product_id, stock) VALUES (%s, %s) ON CONFLICT (product_id) DO UPDATE SET stock = %s RETURNING stock",
+                (product_id, quantity, quantity),
+            )
+            row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
         latency = (time.time() - t) * 1000
         log_event("success", f"PG set stock {product_id} = {row[0]}", latency_ms=latency, dependency="pgpri")
         return row[0]
@@ -175,7 +181,7 @@ def _update_cache(product_id: str, stock: int) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         r.setex(f"stock:{product_id}", 300, str(stock))
         latency = (time.time() - t) * 1000
         log_event("success", f"Cache updated stock:{product_id} = {stock}", latency_ms=latency, dependency="redis2")

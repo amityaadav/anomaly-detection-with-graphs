@@ -10,17 +10,20 @@ on:
 
   workflow_dispatch:
 
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - uses: actions/setup-python@v5
         with:
@@ -41,11 +44,12 @@ jobs:
       - name: CDK bootstrap (first time only)
         run: |
           cd infra
-          cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_DEFAULT_REGION
+          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
 
       - name: CDK deploy all stacks
+        env:
+          OLLAMA_API_KEY: ${{ secrets.OLLAMA_API_KEY }}
         run: |
           cd infra
           cdk deploy --all --require-approval never \
-            --context neo4j_password=${{ secrets.NEO4J_PASSWORD }} \
-            --context ollama_api_key=${{ secrets.OLLAMA_API_KEY }}
+            --context allowed_ip=${{ secrets.ALLOWED_IP }}

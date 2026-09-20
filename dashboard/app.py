@@ -27,6 +27,25 @@ st.set_page_config(page_title="Anomaly Detection Demo", layout="wide")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
+def _require_auth():
+    """Gate access behind a password when DASHBOARD_PASSWORD is set."""
+    expected = os.environ.get("DASHBOARD_PASSWORD")
+    if not expected:
+        return
+    if st.session_state.get("authenticated"):
+        return
+    pwd = st.text_input("Dashboard password", type="password")
+    if pwd and pwd == expected:
+        st.session_state["authenticated"] = True
+        st.rerun()
+    elif pwd:
+        st.error("Incorrect password.")
+    st.stop()
+
+
+_require_auth()
+
+
 @st.cache_resource
 def get_ssm_client():
     return boto3.client("ssm", region_name=AWS_REGION)
@@ -38,15 +57,23 @@ def get_lambda_client():
 
 
 @st.cache_resource
+def get_sm_client():
+    return boto3.client("secretsmanager", region_name=AWS_REGION)
+
+
+@st.cache_resource
 def get_neo4j_driver():
     from neo4j import GraphDatabase
     ssm = get_ssm_client()
+    sm = get_sm_client()
     prefix = os.environ.get("SSM_PREFIX", "/anomaly-demo")
     uri = os.environ.get("NEO4J_URI") or ssm.get_parameter(
         Name=f"{prefix}/neo4j-uri", WithDecryption=True
     )["Parameter"]["Value"]
-    password = ssm.get_parameter(Name=f"{prefix}/neo4j-password", WithDecryption=True)["Parameter"]["Value"]
-    return GraphDatabase.driver(uri, auth=("neo4j", password))
+    secret = json.loads(
+        sm.get_secret_value(SecretId="anomaly-demo/neo4j-credentials")["SecretString"]
+    )
+    return GraphDatabase.driver(uri, auth=("neo4j", secret["password"]))
 
 
 def load_scenarios() -> dict:
@@ -116,11 +143,14 @@ if page == "Dependency Graph":
                     cols = st.columns(min(len(layer_nodes), 5))
                     for i, node in enumerate(layer_nodes):
                         with cols[i % 5]:
+                            import html as _html
+                            safe_name = _html.escape(str(node['name']))
+                            safe_id = _html.escape(str(node['id']))
                             st.markdown(
                                 f"<div style='background:{color}22; border-left:3px solid {color}; "
                                 f"padding:8px; margin:4px 0; border-radius:4px;'>"
-                                f"<strong>{node['name']}</strong><br/>"
-                                f"<small>{node['id']}</small></div>",
+                                f"<strong>{safe_name}</strong><br/>"
+                                f"<small>{safe_id}</small></div>",
                                 unsafe_allow_html=True,
                             )
 

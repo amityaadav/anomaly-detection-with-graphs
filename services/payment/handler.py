@@ -45,7 +45,7 @@ def lambda_handler(event, context):
             latency_ms=latency,
             error_type=type(e).__name__,
         )
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _check_duplicate(payment_id: str, order_id: str) -> None:
@@ -61,7 +61,7 @@ def _check_duplicate(payment_id: str, order_id: str) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         existing = r.get(f"payment:{order_id}")
         if existing:
             raise ValueError(f"Duplicate payment for order {order_id}")
@@ -111,20 +111,24 @@ def _write_postgres(payment_id: str, event: dict) -> None:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
-        password = get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password"
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=password, connect_timeout=5,
+            password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO payments (id, order_id, amount, status, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
-            (payment_id, event.get("order_id"), event.get("amount", 0), "processed"),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO payments (id, order_id, amount, status, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
+                (payment_id, event.get("order_id"), event.get("amount", 0), "processed"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         latency = (time.time() - t) * 1000
         log_event("success", f"PG insert payment {payment_id}", latency_ms=latency, dependency="pgpri")
     except Exception as e:

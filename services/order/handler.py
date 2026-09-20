@@ -56,7 +56,7 @@ def lambda_handler(event, context):
         )
         return {
             "statusCode": 500,
-            "body": json.dumps({"error": str(e)}),
+            "body": json.dumps({"error": "Internal server error"}),
         }
 
 
@@ -78,7 +78,7 @@ def _write_redis(order_id: str, event: dict) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         r.setex(f"order:{order_id}", 3600, json.dumps(event))
         latency = (time.time() - t) * 1000
         log_event("success", f"Redis write order:{order_id}", latency_ms=latency, dependency="redis2")
@@ -109,20 +109,25 @@ def _write_postgres(order_id: str, event: dict) -> None:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password",
+            password=get_param("pg-password"),
             connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO orders (id, payload, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
-            (order_id, json.dumps(event)),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO orders (id, payload, created_at) VALUES (%s, %s, NOW()) ON CONFLICT DO NOTHING",
+                (order_id, json.dumps(event)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         latency = (time.time() - t) * 1000
         log_event("success", f"PG insert order {order_id}", latency_ms=latency, dependency="pgpri")
     except Exception as e:

@@ -6,7 +6,7 @@ services:
       - "7474:7474"   # Browser UI
       - "7687:7687"   # Bolt protocol
     environment:
-      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD:-DemoGraph2026!}
+      - NEO4J_AUTH=neo4j/${NEO4J_PASSWORD}
       - NEO4J_PLUGINS=["apoc"]
       - NEO4J_server_memory_heap_initial__size=256m
       - NEO4J_server_memory_heap_max__size=256m
@@ -19,7 +19,7 @@ services:
     container_name: anomaly-redis
     ports:
       - "6379:6379"
-    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru
+    command: redis-server --maxmemory 64mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
     restart: unless-stopped
 
   postgres:
@@ -30,7 +30,7 @@ services:
     environment:
       - POSTGRES_DB=demo
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${PG_PASSWORD:-DemoPostgres2026!}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped

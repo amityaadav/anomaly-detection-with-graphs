@@ -38,7 +38,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"Search failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _cache_key(query: str, filters: dict) -> str:
@@ -57,7 +57,7 @@ def _check_cache(cache_key: str) -> list | None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         cached = r.get(cache_key)
         if cached:
             latency = (time.time() - t) * 1000
@@ -104,7 +104,7 @@ def _write_cache(cache_key: str, results: list) -> None:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         r.setex(cache_key, 120, json.dumps(results))
         latency = (time.time() - t) * 1000
         log_event("success", f"Cached {cache_key} ({len(results)} results)", latency_ms=latency, dependency="redis2")

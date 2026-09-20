@@ -46,7 +46,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"Notification failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _consume_kafka(event: dict) -> None:
@@ -146,7 +146,7 @@ def _cache_status(recipient: str, notification_type: str) -> None:
     """Cache notification status in Redis (redis1)."""
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         r.setex(f"notif:{recipient}:{notification_type}", 3600, "sent")
     except redis.ConnectionError:
         log_event("degraded", "Cache write failed for notification status", latency_ms=0, dependency="redis1")

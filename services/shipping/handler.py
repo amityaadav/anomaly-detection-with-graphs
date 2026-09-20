@@ -38,7 +38,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"Shipping failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _get_carrier_rate(shipment_id: str, event: dict) -> float:
@@ -82,20 +82,24 @@ def _write_postgres(shipment_id: str, order_id: str, rate: float) -> None:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
-        password = get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password"
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=password, connect_timeout=5,
+            password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO shipments (id, order_id, rate, status, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
-            (shipment_id, order_id, rate, "label_created"),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO shipments (id, order_id, rate, status, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
+                (shipment_id, order_id, rate, "label_created"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         latency = (time.time() - t) * 1000
         log_event("success", f"PG insert shipment {shipment_id}", latency_ms=latency, dependency="pgpri")
     except Exception as e:

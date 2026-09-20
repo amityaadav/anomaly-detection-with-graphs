@@ -1,14 +1,15 @@
 """Lambda functions for domain services and the agent trigger."""
 
+import os
+
 from aws_cdk import (
     Stack,
     Duration,
-    SecretValue,
     aws_lambda as _lambda,
     aws_ec2 as ec2,
     aws_iam as iam,
-    aws_ssm as ssm,
     aws_sns as sns,
+    aws_secretsmanager as secretsmanager,
 )
 from constructs import Construct
 
@@ -49,11 +50,26 @@ class ServicesStack(Stack):
             )
         )
 
-        # Allow Lambdas to write CloudWatch logs with custom metrics
+        # Allow Lambdas to read secrets from Secrets Manager at runtime
+        lambda_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:*:{self.account}:secret:anomaly-demo/*",
+                ],
+            )
+        )
+
+        # cloudwatch:PutMetricData does not support resource-level permissions
         lambda_role.add_to_policy(
             iam.PolicyStatement(
                 actions=["cloudwatch:PutMetricData"],
                 resources=["*"],
+                conditions={
+                    "StringEquals": {
+                        "cloudwatch:namespace": "AnomalyDemo",
+                    }
+                },
             )
         )
 
@@ -66,15 +82,9 @@ class ServicesStack(Stack):
             allow_all_outbound=True,
         )
 
-        pg_password_ref = SecretValue.secrets_manager(
-            "anomaly-demo/rds-credentials",
-            json_field="password",
-        ).to_string()
-        neo4j_password_ref = ssm.StringParameter.value_for_string_parameter(
-            self, "/anomaly-demo/neo4j-password"
-        )
-
         # Domain service Lambda stubs
+        # Secrets (PG, Neo4j, Redis passwords) are read at runtime via
+        # Secrets Manager — never passed as env vars.
         service_names = [
             "order", "payment", "cart", "inventory", "shipping",
             "user", "search", "notification", "pricing", "recommendation",
@@ -103,23 +113,26 @@ class ServicesStack(Stack):
                     "SSM_PREFIX": "/anomaly-demo",
                     "REDIS_HOST": data_stack.ec2_instance.instance_private_ip,
                     "PG_ENDPOINT": data_stack.rds_instance.db_instance_endpoint_address,
-                    "PG_PASSWORD": pg_password_ref,
                     "NEO4J_URI": f"bolt://{data_stack.ec2_instance.instance_private_ip}:7687",
-                    "NEO4J_PASSWORD": neo4j_password_ref,
                 },
             )
             self.service_lambdas[svc] = fn
 
-        # Agent trigger Lambda (invoked by SNS when CloudWatch alarm fires)
-        ollama_api_key = self.node.try_get_context("ollama_api_key") or "none"
-        ssm.StringParameter(
+        # Ollama API key — stored in Secrets Manager, read at runtime by agent
+        ollama_api_key = (
+            os.environ.get("OLLAMA_API_KEY")
+            or self.node.try_get_context("ollama_api_key")
+            or "none"
+        )
+        secretsmanager.CfnSecret(
             self,
             "OllamaApiKey",
-            parameter_name="/anomaly-demo/ollama-api-key",
-            string_value=ollama_api_key,
+            name="anomaly-demo/ollama-credentials",
+            secret_string=f'{{"api_key":"{ollama_api_key}"}}',
             description="Ollama Cloud API key for the triage agent",
         )
 
+        # Agent trigger Lambda (invoked by SNS when CloudWatch alarm fires)
         agent_role = iam.Role(
             self,
             "AgentLambdaRole",
@@ -141,12 +154,23 @@ class ServicesStack(Stack):
         )
         agent_role.add_to_policy(
             iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:*:{self.account}:secret:anomaly-demo/*",
+                ],
+            )
+        )
+        agent_role.add_to_policy(
+            iam.PolicyStatement(
                 actions=[
                     "logs:StartQuery",
                     "logs:GetQueryResults",
                     "logs:DescribeLogGroups",
                 ],
-                resources=["*"],
+                resources=[
+                    f"arn:aws:logs:*:{self.account}:log-group:/aws/lambda/anomaly-demo-*",
+                    f"arn:aws:logs:*:{self.account}:log-group:/aws/lambda/anomaly-demo-*:*",
+                ],
             )
         )
 
@@ -167,7 +191,7 @@ class ServicesStack(Stack):
             },
         )
 
-        # Wire SNS → agent trigger
+        # Wire SNS -> agent trigger
         self.alert_topic.add_subscription(
             __import__(
                 "aws_cdk.aws_sns_subscriptions", fromlist=["LambdaSubscription"]

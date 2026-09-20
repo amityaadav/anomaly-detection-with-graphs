@@ -39,7 +39,7 @@ def lambda_handler(event, context):
     except Exception as e:
         latency = (time.time() - start) * 1000
         log_event("error", f"User operation failed: {str(e)}", latency_ms=latency, error_type=type(e).__name__)
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {"statusCode": 500, "body": json.dumps({"error": "Internal server error"})}
 
 
 def _get_user(user_id: str) -> dict:
@@ -48,7 +48,7 @@ def _get_user(user_id: str) -> dict:
 
     try:
         host = get_param("redis-host")
-        r = redis.Redis(host=host, port=6379, socket_timeout=5)
+        r = redis.Redis(host=host, port=6379, socket_timeout=5, password=get_param("redis-password"))
         cached = r.get(f"user:{user_id}")
         if cached:
             latency = (time.time() - t) * 1000
@@ -73,17 +73,21 @@ def _read_postgres(user_id: str) -> dict:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
-        password = get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password"
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=password, connect_timeout=5,
+            password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute("SELECT name, email, preferences FROM users WHERE id = %s", (user_id,))
-        row = cur.fetchone()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT name, email, preferences FROM users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+        finally:
+            conn.close()
         if row:
             profile = {"name": row[0], "email": row[1], "preferences": row[2]}
         else:
@@ -108,20 +112,24 @@ def _create_user(user_id: str, event: dict) -> dict:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
-        password = get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password"
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=password, connect_timeout=5,
+            password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO users (id, name, email, preferences, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
-            (user_id, event.get("name", ""), event.get("email", ""), json.dumps(event.get("preferences", {}))),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO users (id, name, email, preferences, created_at) VALUES (%s, %s, %s, %s, NOW()) ON CONFLICT DO NOTHING",
+                (user_id, event.get("name", ""), event.get("email", ""), json.dumps(event.get("preferences", {}))),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         profile = {"name": event.get("name"), "email": event.get("email"), "preferences": event.get("preferences", {})}
         latency = (time.time() - t) * 1000
         log_event("success", f"PG insert user {user_id}", latency_ms=latency, dependency="pgpri")
@@ -144,20 +152,24 @@ def _update_user(user_id: str, event: dict) -> dict:
         )
         raise ConnectionError("PostgreSQL: connection pool exhausted")
 
+    if is_failure_active("vault-failure"):
+        raise ConnectionError("Secrets Manager unavailable — credential retrieval failed")
+
     try:
         host = get_param("pg-endpoint")
-        password = get_param("pg-password") if not is_failure_active("vault-failure") else "stale-password"
         conn = psycopg2.connect(
             host=host, port=5432, dbname="demo", user="postgres",
-            password=password, connect_timeout=5,
+            password=get_param("pg-password"), connect_timeout=5,
         )
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE users SET name = COALESCE(%s, name), email = COALESCE(%s, email) WHERE id = %s",
-            (event.get("name"), event.get("email"), user_id),
-        )
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE users SET name = COALESCE(%s, name), email = COALESCE(%s, email) WHERE id = %s",
+                (event.get("name"), event.get("email"), user_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
         latency = (time.time() - t) * 1000
         log_event("success", f"PG update user {user_id}", latency_ms=latency, dependency="pgpri")
         return _read_postgres(user_id)

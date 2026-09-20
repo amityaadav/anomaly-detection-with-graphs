@@ -1,6 +1,5 @@
 # Agent dependencies (Week 3) — requires Python 3.10+
 -r requirements.txt
-strands-agents>=0.1.0
-strands-agents-tools>=0.1.0
-neo4j>=5.0.0
-ollama>=0.4.0
+strands-agents==1.54.0
+strands-agents-tools==0.8.8
+ollama==0.6.2
