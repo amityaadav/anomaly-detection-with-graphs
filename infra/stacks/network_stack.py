@@ -1,4 +1,4 @@
-"""VPC and security group setup for the demo."""
+"""VPC and security group setup."""
 
 from aws_cdk import Stack, aws_ec2 as ec2
 from constructs import Construct
@@ -8,13 +8,19 @@ class NetworkStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # VPC with public + private subnets (free tier: no NAT Gateway)
-        # Using a single public subnet to avoid NAT Gateway charges ($0.045/hr)
+        allowed_ip = self.node.try_get_context("allowed_ip")
+        if not allowed_ip:
+            raise ValueError(
+                "CDK context 'allowed_ip' is required. "
+                "Deploy with: cdk deploy -c allowed_ip=YOUR.IP.HERE"
+            )
+        allowed_cidr = f"{allowed_ip}/32"
+
         self.vpc = ec2.Vpc(
             self,
             "DemoVpc",
             max_azs=2,
-            nat_gateways=0,  # Avoid charges — Lambdas use public subnets
+            nat_gateways=0,
             subnet_configuration=[
                 ec2.SubnetConfiguration(
                     name="Public",
@@ -24,7 +30,6 @@ class NetworkStack(Stack):
             ],
         )
 
-        # Security group for EC2 (Neo4j + Redis)
         self.ec2_sg = ec2.SecurityGroup(
             self,
             "Ec2Sg",
@@ -33,35 +38,36 @@ class NetworkStack(Stack):
             allow_all_outbound=True,
         )
 
-        # Neo4j Bolt
         self.ec2_sg.add_ingress_rule(
             ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
             ec2.Port.tcp(7687),
             "Neo4j Bolt from VPC",
         )
 
-        # Neo4j Browser (for local dev — restrict to your IP in production)
         self.ec2_sg.add_ingress_rule(
-            ec2.Peer.any_ipv4(),
+            ec2.Peer.ipv4(allowed_cidr),
             ec2.Port.tcp(7474),
             "Neo4j Browser",
         )
 
-        # Redis
         self.ec2_sg.add_ingress_rule(
             ec2.Peer.ipv4(self.vpc.vpc_cidr_block),
             ec2.Port.tcp(6379),
             "Redis from VPC",
         )
 
-        # SSH (restrict to your IP in production)
         self.ec2_sg.add_ingress_rule(
-            ec2.Peer.any_ipv4(),
+            ec2.Peer.ipv4(allowed_cidr),
             ec2.Port.tcp(22),
             "SSH access",
         )
 
-        # Security group for RDS
+        self.ec2_sg.add_ingress_rule(
+            ec2.Peer.ipv4(allowed_cidr),
+            ec2.Port.tcp(8501),
+            "Streamlit dashboard",
+        )
+
         self.rds_sg = ec2.SecurityGroup(
             self,
             "RdsSg",

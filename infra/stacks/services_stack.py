@@ -3,6 +3,7 @@
 from aws_cdk import (
     Stack,
     Duration,
+    SecretValue,
     aws_lambda as _lambda,
     aws_ec2 as ec2,
     aws_iam as iam,
@@ -65,11 +66,10 @@ class ServicesStack(Stack):
             allow_all_outbound=True,
         )
 
-        # Resolve passwords from SSM parameters that DataStack creates
-        # (CloudFormation dynamic references — no secrets in source code)
-        pg_password_ref = ssm.StringParameter.value_for_string_parameter(
-            self, "/anomaly-demo/pg-password"
-        )
+        pg_password_ref = SecretValue.secrets_manager(
+            "anomaly-demo/rds-credentials",
+            json_field="password",
+        ).to_string()
         neo4j_password_ref = ssm.StringParameter.value_for_string_parameter(
             self, "/anomaly-demo/neo4j-password"
         )

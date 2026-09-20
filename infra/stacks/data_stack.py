@@ -3,11 +3,11 @@
 from aws_cdk import (
     Stack,
     CfnOutput,
-    SecretValue,
     aws_ec2 as ec2,
     aws_iam as iam,
     aws_rds as rds,
     aws_ssm as ssm,
+    aws_secretsmanager as secretsmanager,
     RemovalPolicy,
     Duration,
 )
@@ -15,11 +15,31 @@ from constructs import Construct
 
 
 class DataStack(Stack):
-    def __init__(self, scope: Construct, id: str, vpc: ec2.Vpc, ec2_sg: ec2.SecurityGroup, **kwargs) -> None:
+    def __init__(
+        self, scope: Construct, id: str,
+        vpc: ec2.Vpc, ec2_sg: ec2.SecurityGroup, rds_sg: ec2.SecurityGroup,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
-        neo4j_password = self.node.try_get_context("neo4j_password") or "DemoGraph2026x"
-        pg_password = self.node.try_get_context("pg_password") or "DemoPostgres2026!"
+        neo4j_password = self.node.try_get_context("neo4j_password")
+        if not neo4j_password:
+            raise ValueError(
+                "CDK context 'neo4j_password' is required. "
+                "Deploy with: cdk deploy -c neo4j_password=YOUR_PASSWORD"
+            )
+
+        self.pg_secret = secretsmanager.Secret(
+            self,
+            "PgCredentials",
+            secret_name="anomaly-demo/rds-credentials",
+            generate_secret_string=secretsmanager.SecretStringGenerator(
+                secret_string_template='{"username":"postgres"}',
+                generate_string_key="password",
+                exclude_punctuation=True,
+                password_length=32,
+            ),
+        )
 
         # -----------------------------------------------------------
         # EC2 instance: Neo4j + Redis via Docker Compose
@@ -88,6 +108,7 @@ COMPOSE""",
             user_data=user_data,
             security_group=ec2_sg,
             key_pair=key_pair,
+            require_imdsv2=True,
         )
 
         self.ec2_instance.role.add_to_principal_policy(
@@ -107,6 +128,8 @@ COMPOSE""",
                 ],
             )
         )
+
+        self.pg_secret.grant_read(self.ec2_instance.role)
 
         # Elastic IP - stable public address across stop/start cycles (free while attached)
         eip = ec2.CfnEIP(self, "DataInstanceEIP", domain="vpc")
@@ -130,17 +153,16 @@ COMPOSE""",
             ),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
+            security_groups=[rds_sg],
             allocated_storage=20,
             max_allocated_storage=20,
             database_name="demo",
-            credentials=rds.Credentials.from_password(
-                username="postgres",
-                password=SecretValue.unsafe_plain_text(pg_password),
-            ),
-            publicly_accessible=True,  # For local dev access — lock down for production
+            credentials=rds.Credentials.from_secret(self.pg_secret),
+            publicly_accessible=False,
+            storage_encrypted=True,
             removal_policy=RemovalPolicy.DESTROY,
             deletion_protection=False,
-            backup_retention=Duration.days(0),  # No backups — demo only
+            backup_retention=Duration.days(1),
         )
 
         # -----------------------------------------------------------
@@ -170,11 +192,13 @@ COMPOSE""",
         user_data.add_commands(
             f"export PG_HOST={self.rds_instance.db_instance_endpoint_address}",
             "python3 << 'PYEOF'",
-            "import psycopg2, boto3, os, time",
-            "ssm = boto3.client('ssm', region_name='us-east-1')",
+            "import psycopg2, boto3, os, time, json",
+            "sm = boto3.client('secretsmanager', region_name='us-east-1')",
             "for attempt in range(12):",
             "    try:",
-            "        pw = ssm.get_parameter(Name='/anomaly-demo/pg-password')['Parameter']['Value']",
+            "        secret = json.loads(sm.get_secret_value(",
+            "            SecretId='anomaly-demo/rds-credentials')['SecretString'])",
+            "        pw = secret['password']",
             "        conn = psycopg2.connect(host=os.environ['PG_HOST'], port=5432,",
             "            dbname='demo', user='postgres', password=pw, connect_timeout=10)",
             "        cur = conn.cursor()",
@@ -250,9 +274,9 @@ COMPOSE""",
 
         ssm.StringParameter(
             self,
-            "PgPassword",
-            parameter_name="/anomaly-demo/pg-password",
-            string_value=pg_password,
+            "PgSecretArn",
+            parameter_name="/anomaly-demo/pg-secret-arn",
+            string_value=self.pg_secret.secret_arn,
         )
 
         # Failure injection flags (default: disabled)
