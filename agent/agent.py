@@ -14,13 +14,14 @@ to diagnose the root cause when a CloudWatch alarm fires.  It:
 Model: Ollama Cloud (qwen3:32b) via the Strands OllamaModel provider.
 """
 
+import json
 import os
 
 import boto3
 from strands import Agent
 from strands.models.ollama import OllamaModel
 
-_ssm = boto3.client("ssm")
+_sm = boto3.client("secretsmanager")
 SSM_PREFIX = os.environ.get("SSM_PREFIX", "/anomaly-demo")
 
 from tools.neo4j_tool import (
@@ -88,8 +89,8 @@ when you can query the graph or logs."""
 def create_agent() -> Agent:
     """Create and return the triage agent with all tools wired up.
 
-    The Ollama Cloud API key is read from SSM Parameter Store at
-    runtime (/anomaly-demo/ollama-api-key).  Host and model come
+    The Ollama Cloud API key is read from Secrets Manager at
+    runtime (anomaly-demo/ollama-credentials).  Host and model come
     from environment variables (non-secret).
 
     Returns:
@@ -100,10 +101,8 @@ def create_agent() -> Agent:
     ollama_host = os.environ.get("OLLAMA_HOST", "https://api.ollama.com")
     model_id = os.environ.get("OLLAMA_MODEL", "qwen3:32b")
 
-    resp = _ssm.get_parameter(
-        Name=f"{SSM_PREFIX}/ollama-api-key", WithDecryption=True,
-    )
-    api_key = resp["Parameter"]["Value"]
+    resp = _sm.get_secret_value(SecretId="anomaly-demo/ollama-credentials")
+    api_key = json.loads(resp["SecretString"])["api_key"]
 
     model = OllamaModel(
         host=ollama_host,

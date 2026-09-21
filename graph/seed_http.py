@@ -98,11 +98,12 @@ def send_statements(host: str, password: str, statements: list[str], batch_size:
 
 
 def get_password_from_ssm(prefix: str = "/anomaly-demo") -> str:
-    """Read Neo4j password from SSM Parameter Store."""
+    """Read Neo4j password from Secrets Manager."""
     import boto3
-    ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-    resp = ssm.get_parameter(Name=f"{prefix}/neo4j-password", WithDecryption=True)
-    return resp["Parameter"]["Value"]
+    sm = boto3.client("secretsmanager", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+    import json as _json
+    resp = sm.get_secret_value(SecretId="anomaly-demo/neo4j-credentials")
+    return _json.loads(resp["SecretString"])["password"]
 
 
 def verify(host: str, password: str):
